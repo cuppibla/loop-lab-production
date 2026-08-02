@@ -23,6 +23,10 @@ already know the fix — a durable session that short-lived runs read and write
 But a durable session only makes waking up *possible*. This lab is about the
 half nobody teaches: **who actually presses Continue?**
 
+![The Production Floor — the six-rung climb](codelab-assets/roadmap-hero.png)
+
+![Rung map: one long job → two doorbells → the join → the backstop → broadcast → cloud](codelab-assets/roadmap.png)
+
 ### What you'll build
 
 A producer agent that:
@@ -68,6 +72,35 @@ exists because **events get lost**. A callback network-blips into nothing. A
 process dies between a side effect and its log line. No event will ever fire
 for these — only a clock that goes *looking* can find them. The fast path
 handles the 99%; **the clock is where your reliability comes from.**
+
+The whole lab is these three doorbells aimed at two files:
+
+```
+        MACHINE                HUMAN                 CLOCK
+    (farm callback)         (your click)         (the backstop)
+          │                      │                     │
+          ▼                      ▼                     ▼
+    ┌─────────────────────────────────────────────────────┐
+    │              drive(session, ...)                    │  ← one contract
+    └──────────────────────────┬──────────────────────────┘
+                    reads / appends events
+    ┌──────────────────────────▼──────────────────────────┐
+    │  floor.db          — THE SESSION (the agent's memory)│
+    │  render_farm.json  — THE WORLD  (the farm's order    │
+    │                       book: what really happened)    │
+    └──────────────────────────────────────────────────────┘
+```
+
+Keep the two files apart in your head — most of rung 04 is what happens when
+they disagree.
+
+> aside positive
+> **"Isn't a doorbell just a webhook?"** A webhook is *transport* — an HTTP
+> request that arrives somewhere. A doorbell is the *resume semantic*: a
+> `function_response` matched to a paused call in a durable session, waking a
+> conversation that has no process. A webhook with nobody to wake is just an
+> HTTP 200. In rung 05 you'll wire the transport; the semantic is what rungs
+> 01–04 build.
 
 And here is the punchline this whole lab builds toward: all three doorbells
 converge on **one function**:
@@ -146,9 +179,26 @@ python drive.py pending
 ```
 
 One open call in the session. One row in the order book. **That is the entire
-system.** No process, no thread, no `await`. Notice the tool also stored its
-own `call_id` into the order-book row — hold that thought; it is the return
-address the doorbell will need.
+system.** No process, no thread, no `await`.
+
+### What just happened, mechanically
+
+1. The model called `submit_render` — a `LongRunningFunctionTool`.
+2. The tool ran for a millisecond: it wrote one row to the order book and
+   returned `{"status": "pending", ...}`.
+3. ADK logged the call, logged that interim `pending` result, and **ended the
+   run cleanly**. (That interim response matters enormously in rung 04 —
+   remember it exists.)
+4. `drive.py` got control back and the process exited.
+
+> aside positive
+> **The return address.** Look at the tool's one interesting line:
+> `jobs.submit(kind, take, call_id=tool_context.function_call_id)`. The tool
+> stored *its own call id* into the order-book row. When the farm finishes —
+> minutes or days later, in a different process — that stored id is how the
+> result finds its way back to **this** conversation. Every callback system
+> you will ever build has this "reply-to" header somewhere; here it is in
+> nine characters.
 
 And notice the trap we've built: nothing in this rung can ever *finish* the
 job. The farm doesn't exist yet. Who rings the doorbell?
@@ -199,6 +249,15 @@ Read that carefully — three remarkable things happened:
    long-running call — and parked again. The farm, out of work, clocked out.
    **Nothing is running again.**
 3. The `ring()` that the farm used is the same `ring()` you're about to use.
+
+> aside positive
+> **Whose process did the agent just run in?** The farm's. Read that again —
+> the "agent" your terminal 1 started was woken up, reasoned, and called a
+> tool *inside terminal 2's process*, because that's where `drive()` happened
+> to be called. The agent has no home process. It materializes wherever
+> someone drives its session, then vanishes. **The agent *is* the session.**
+> Once this clicks, "deploy the agent" stops meaning "keep a process alive"
+> and starts meaning "put the session somewhere every doorbell can reach."
 
 👉💻 **Terminal 1 — you are the second doorbell:**
 ```bash
@@ -258,9 +317,27 @@ python drive.py start
 [drive] -> PAUSED
 ```
 
-Three open calls, one session, no process. The parallelism is not
-`ParallelAgent` — nothing about the agent's *reasoning* is parallel. **What
-runs in parallel is the outside world.**
+Three open calls, one session, no process. This is a different *kind* of
+parallelism than the one agent frameworks usually mean:
+
+| | `ParallelAgent` | This rung |
+|---|---|---|
+| What runs in parallel | model branches (reasoning) | **the outside world** (renders) |
+| Where the fan-out lives | the agent graph, at build time | one model turn's N calls, at run time |
+| What it costs while running | N live model contexts | zero — everything is parked |
+| Who collects the results | the framework | **you, in the driver** |
+
+Nothing about the agent's *reasoning* is parallel — it made three calls in
+one breath and went to sleep. **What runs in parallel is the world.** And
+that's why the framework can't join it for you: the framework can't see the
+render farm. Here is the entire join, from `drive.py`:
+
+```python
+done = jobs.done_passed_count()                 # count the WORLD, not the chat
+print(f"[join] {done}/4 assets passed QC")
+if done == 4:
+    print("[gate] driver-verified: all four in the world. ...")
+```
 
 👉💻 **Run the farm, then approve when asked, then one more farm shift:**
 ```bash
@@ -387,6 +464,26 @@ python backstop.py
 The ghost is answered `failed`, the agent resubmits, and the episode is back
 on rails — finish it with `farm.py`, `approve`, `farm.py` as usual.
 
+### The discriminator, exactly
+
+The backstop tells the three cases apart by **counting responses per call**
+in the session:
+
+| Responses logged | Meaning | Backstop does |
+|---|---|---|
+| **0** | crashed turn — the interims died with the process | answer the **whole set** in one message |
+| **1** | the interim only — clean path, still open | world says done+unrung → **re-ring**; otherwise healthy |
+| **2+** | interim + final — answered | nothing |
+| *(any, `ask_human`)* | a human's pause | **not my job** — the human doorbell owns it |
+
+> aside negative
+> **"Wait — Lab 1 said counting responses is a trap!"** It is, if you don't
+> know what the counts mean. The trap is assuming *one response = answered*.
+> The truth is *one response = the interim pending*, because a long-running
+> tool's interim result is itself logged as a `function_response`. Count
+> **knowingly** — 0 / 1 / 2+ each mean something precise — and the same
+> mechanism that was a trap becomes your diagnostic.
+
 > aside negative
 > **Why "as a set" is load-bearing.** On the clean path, every long-running
 > call's interim `{'status': 'pending'}` result is itself logged — that is
@@ -457,6 +554,24 @@ comments tell you the exact event shapes), re-run, iterate.
 > button stays disabled without it. An event contract is an interface: the
 > renderer knows nothing about your agent, and that is the point. One log,
 > two audiences — your terminal and a set dressed like Netflix.
+
+The contract, in one table — every event your hooks must produce:
+
+| Event | Emitted when | The room renders it as |
+|---|---|---|
+| `job_submitted` + `world_patch` | a submit call is bridged (HOOK 1) | a job card appearing on the board |
+| `job_progress` | the farm ticks (given) | the card's progress bar |
+| `job_paused_need_human` + `awaiting_action` | an ask_human call is bridged (HOOK 2) | the pause card — and its **enabled** button |
+| `job_completed` + `join_progress` | a qc-passed doorbell (HOOK 3) | the card flipping to done; the join meter |
+| `package_ready` → `gate_check` → `room_complete` | the driver verifies 4/4 (given) | the finale |
+
+> aside positive
+> **Why a replay can stand in for you.** The VibeFlix room was built against a
+> hand-written *replay* of this exact contract, long before this backend
+> existed — and the frontend cannot tell the difference. That symmetry is the
+> whole trick: the contract is the interface, so a recorded stream is a
+> perfect stunt double for a live agent. (On stage, that's your demo
+> insurance; in tests, it's your fixture.)
 
 `solutions/` is byte-for-byte the live backend the VibeFlix app runs. If you
 have the app, point `ROOM2_AGENT_URL` at your server and watch your own run
