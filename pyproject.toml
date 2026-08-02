@@ -1,0 +1,15 @@
+[project]
+name = "loop-lab-production"
+version = "0.1.0"
+description = "Lab: the production floor — doorbells, fan-out, joins, and the backstop for a long-running agent"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "google-adk[db]==2.5.0",
+    "aiosqlite>=0.22",
+    "greenlet>=3.5",
+    "python-dotenv>=1.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "requests>=2.32",
+]

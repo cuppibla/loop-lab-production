@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.db
+render_farm.json
+.env
+lab-production-floor/
