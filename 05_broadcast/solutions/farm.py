@@ -38,6 +38,10 @@ def reset():
     _jobs.clear()
 
 
+def has(kind: str, take: int) -> bool:
+    return (kind, take) in _jobs
+
+
 def submit(kind: str, take: int) -> str:
     """Idempotent per (kind, take): a duplicate submit returns the same job."""
     key = (kind, take)

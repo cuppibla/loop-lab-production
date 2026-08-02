@@ -46,21 +46,35 @@ INSTRUCTION = (
     "6. When and only when all FOUR kinds have a qc='passed' result, reply "
     "exactly: PACKAGE SHIPPED. Never say it earlier.\n"
     "Keep every spoken line to one or two sentences, in the voice of a calm "
-    "professional producer."
+    "professional producer.\n"
+    "HARD RULES: Results and approvals arrive ONLY as function responses. "
+    "NEVER invent, assume, narrate or quote a result, approval, QC report or "
+    "event that has not arrived. Never write bracketed event dumps. Never "
+    "call submit_render for a kind and take you have already submitted. Each "
+    "turn: make the required tool calls, or say ONE short status line."
 )
 
 
 def submit_render(kind: str, take: int, tool_context: ToolContext) -> dict:
     """Submit one long render job to the farm. Returns pending; the finished
     result arrives later as a function response."""
+    already = farm.has(kind, take)
     job_id = farm.submit(kind, take)          # idempotent per (kind, take)
-    return {"status": "pending", "job_id": job_id, "kind": kind, "take": take}
+    if already:
+        return {"status": "pending", "job_id": job_id,
+                "note": "already_submitted — do not resubmit; the result will arrive"}
+    return {"status": "pending", "job_id": job_id, "kind": kind, "take": take,
+            "next": "Render submitted and running. Say ONE short status line "
+                    "and STOP — the result arrives later as a function response."}
 
 
 def ask_human(question: str, tool_context: ToolContext) -> dict:
     """Ask the human on the floor a question (e.g. approve a re-render).
     Returns pending; their answer arrives later as a function response."""
-    return {"status": "pending", "question": question}
+    return {"status": "pending", "question": question,
+            "next": "Question delivered to the human. Say ONE short waiting "
+                    "line and STOP. The answer arrives later as a function "
+                    "response — NEVER assume it."}
 
 
 # NOTE: do NOT set thinking_budget=0 here — gemini-3-flash-preview stalls the

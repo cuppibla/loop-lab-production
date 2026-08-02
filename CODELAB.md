@@ -205,6 +205,21 @@ job. The farm doesn't exist yet. Who rings the doorbell?
 
 *(Lab 1 alumni: this was Steps 2–3 in a new costume. Skim ahead.)*
 
+### What you learned
+
+- A long-running call **parks** in the durable session and the run ends —
+  "waiting" costs zero compute and survives any restart.
+- The **return address**: the tool stores its own `function_call_id` next to
+  the external job. That correlation is the whole callback architecture.
+
+> aside positive
+> **On your own agent:** take any tool of yours that waits on something slow —
+> a batch API, an export, a human review — and convert it: return `pending`,
+> and store `tool_context.function_call_id` alongside your external reference
+> (order id, ticket id, operation name), somewhere durable. If you can't point
+> at where that correlation lives, you don't have a long-running agent yet —
+> you have a request that hasn't timed out.
+
 ## Rung 02 · Two doorbells, one door
 Duration: 12:00
 
@@ -291,6 +306,28 @@ python farm.py        # one more shift for take 2
 > harmless — the job just sits there, unrendered, until a real human says so.
 > **A gate is a code check, not a hopeful prompt.** (You'll watch the model
 > try it in the next rung.)
+
+The full arc, as captured — two terminals, four wake-ups, zero waiting
+processes:
+
+![Rung 02, the real session: submit, farm rings, you approve, farm rings again](codelab-assets/term-02-doorbells.png)
+
+### What you learned
+
+- Machine and human wake-ups are **the same mechanism**: one
+  `function_response`, one `ring()`, one session. Only the latency differs.
+- The agent **materializes wherever `drive()` is called** — it ran in the
+  farm's process. The agent *is* the session.
+- Approval gates live **in the world** (the store the executor checks), not
+  in the prompt.
+
+> aside positive
+> **On your own agent:** inventory every wait in your flow and label its
+> doorbell — machine or human. Then make both ring the *same* resume helper;
+> if your webhook handler and your approval UI take different code paths into
+> the agent, unify them now. And move every "requires approval" check into
+> the system that *performs* the action — your DB, your payment layer, your
+> deploy pipeline — never into model politeness.
 
 ## Rung 03 · The join
 Duration: 12:00
@@ -379,6 +416,26 @@ PACKAGE SHIPPED.
 > `localized_trailer` only after the trailer's `qc='passed'` response arrived
 > — a *data* dependency enforced at the only moment it can be: when the
 > result actually exists.
+
+Here is that exact moment, captured — victory declared at three, corrected by
+the count:
+
+![Rung 03, the real session: the model says PACKAGE SHIPPED at 3/4; the driver's join meter and gate line correct it](codelab-assets/term-03-join.png)
+
+### What you learned
+
+- One model turn can hold **several pending calls**; the world finishes them
+  in its own order; nothing about this needs `ParallelAgent`.
+- The **join is code**: count completions in the external store. Model
+  narration is color commentary, not state.
+
+> aside positive
+> **On your own agent:** find every place you currently *believe* the model's
+> summary of progress — "all subtasks complete", "email sent", "deploy done".
+> Replace each with a driver-side count of the external system's records, and
+> make that count the gate. When the model's claim and the count disagree,
+> the count wins — and log the disagreement: it is the cheapest eval signal
+> you will ever collect.
 
 ## Rung 04 · When no one rings
 Duration: 15:00
@@ -501,6 +558,27 @@ in the session:
 > job`. In production the clock is Cloud Scheduler or a Cloud Tasks deadline
 > enqueued at submit time. **The deadline is the third doorbell.**
 
+The ghost hunt, as captured — three waited for, two existed, one exorcised:
+
+![Rung 04, the real session: crash mid-fan-out, resume replays three pendings, the world has two jobs, the backstop answers the crashed turn as a set](codelab-assets/term-04-ghost.png)
+
+### What you learned
+
+- Two failures make **no sound**: a lost callback, and a ghost pending. No
+  event will ever fire for either; only a clock that goes looking finds them.
+- Crash recovery **replays long-running calls as pending** — it does not
+  re-run them. That is where ghosts come from.
+- A crashed **parallel** turn can only be revived by answering the whole set
+  in one message.
+
+> aside positive
+> **On your own agent:** schedule a reconciler. It (a) lists the session's
+> open calls, (b) lists the external system's records, (c) answers *both*
+> mismatch directions — re-ring what the world finished, fail what the world
+> never received — and (d) leaves human pauses alone. Enqueue a deadline the
+> moment you submit anything. If your agent has run for a week and this job
+> has never once found a mismatch, check that it's actually running.
+
 ## Rung 05 · Broadcast — light up the room
 Duration: 12:00
 
@@ -575,7 +653,43 @@ The contract, in one table — every event your hooks must produce:
 
 `solutions/` is byte-for-byte the live backend the VibeFlix app runs. If you
 have the app, point `ROOM2_AGENT_URL` at your server and watch your own run
-play as television.
+play as television. This is what your event stream looks like on the set —
+every frame below is a real episode driven by this exact backend:
+
+**The fan-out — HOOK 1's payoff.** Job cards appear the moment your bridge
+emits `job_submitted`; the localized trailer sits grey on the board, waiting
+on its dependency:
+
+![Act 1: three cards rendering with progress bars, localized trailer greyed out, join meter live](codelab-assets/ui-fanout.png)
+
+**The wait — the room goes dark.** The agent chip flips to OFFLINE, the feed
+prints *"producer agent has left the floor"*, the WORLD RECORD panel shows
+the one row that exists (`PENDING · awaiting human`), and the pause card's
+button is live because your HOOK 2 emitted `awaiting_action`:
+
+![The dark room: OFFLINE agent, join 2/4, the world record row, and the enabled Re-render button](codelab-assets/ui-darkroom.png)
+
+**The finale — your join on television.** Take 1 rejected and take 2 final
+side by side, the join meter at 4/4, gate PASSED — and the consumer page
+playing the assets your run shipped:
+
+![Shipped: all four assets done, join 4/4, the package live on the consumer page](codelab-assets/ui-shipped.png)
+
+### What you learned
+
+- A typed event contract is an **interface**: the same stream feeds your
+  terminal, a robot grader, and a Netflix-dressed set — none of them know
+  what's behind it.
+- The wait signal (`awaiting_action`) is part of the contract — UIs need to
+  know *that* you're waiting, not just *why*.
+
+> aside positive
+> **On your own agent:** define an event schema for your loop's moments —
+> submitted, progress, paused-for-human, resumed, completed, verified. Emit
+> them **from the driver** (never from model text), and write one CI check
+> that replays a full episode against a stub world and asserts the stream,
+> answering its own doorbells like `check.py` does. That one check regresses
+> your entire Trigger layer.
 
 ## Rung 06 · To the cloud
 Duration: 5:00
@@ -616,6 +730,30 @@ event, or a clock. The first two are your fast path. The clock is your
 reliability. And all three converge on one boring, durable function:
 
 **`drive(session, …)` — what changes is who calls it, never what it is.**
+
+### Take it home: seven checks for any long-running agent
+
+Point these at an agent you already have — each one is an afternoon, and each
+maps to a rung you just climbed:
+
+1. **Name every wait.** List each place your agent waits on the world; label
+   its doorbell — machine, human, or clock. Unlabeled waits are where it will
+   silently die. *(big idea)*
+2. **Find the return address.** Where is the call-id ↔ external-job
+   correlation stored? It must be durable and live next to the job. *(01)*
+3. **One resume path.** Webhook handler, approval UI, retry script — all of
+   them should converge on one `drive()`-shaped helper. *(02)*
+4. **Move the gates into the world.** Every "needs approval" must be enforced
+   by the system that performs the action, not by model patience. *(02)*
+5. **Count, don't believe.** Progress and joins come from driver-side counts
+   of external records; the model's "all done!" is narration. *(03)*
+6. **Reconcile on a clock.** A scheduled two-way diff between session and
+   world, answering both mismatch directions, batching crashed parallel
+   turns, skipping human pauses — with a deadline enqueued at submit time. *(04)*
+7. **Type your events.** Emit a contract stream from the driver and let a
+   robot grade one full episode in CI. *(05)*
+
+If all seven hold, your agent doesn't just *survive* time — it runs on it.
 
 ### Where to go next
 
