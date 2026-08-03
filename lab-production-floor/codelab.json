@@ -1,0 +1,27 @@
+{
+  "environment": "web",
+  "format": "html",
+  "prefix": "https://storage.googleapis.com",
+  "mainga": "UA-49880327-14",
+  "updated": "2026-08-02T13:16:37-07:00",
+  "id": "lab-production-floor",
+  "duration": 77,
+  "title": "The Production Floor: Who Presses Continue?",
+  "summary": "Build the Trigger layer of a long-running agent with Google’s ADK — two doorbells (machine + human), a hand-written join over fanned-out long jobs, and the backstop that catches the failures nobody rings a bell for.",
+  "source": "CODELAB.md",
+  "theme": "",
+  "status": [
+    "draft"
+  ],
+  "category": [
+    "ai",
+    "adk",
+    "agents",
+    "gemini"
+  ],
+  "tags": [
+    "web"
+  ],
+  "feedback": "https://github.com/cuppibla/loop-lab-production/issues",
+  "url": "lab-production-floor"
+}
