@@ -30,6 +30,20 @@ source .venv/bin/activate
 cp .env.example .env       # put your Gemini API key in .env
 ```
 
+## The cast (the same five things in every rung)
+
+| | What it is |
+|---|---|
+| `agent.py` | the agent's *definition* — instructions + tools. Never runs on its own. |
+| `drive.py` | **the CLI you type** (`reset` / `start` / `approve` / …). Starts one run, then the process exits. |
+| `farm.py` | the render farm — a **separate program**, standing in for the outside world. |
+| `floor.db` | **THE SESSION** — the agent's memory (SQLite of events, written by ADK). |
+| `render_farm.json` | **THE WORLD** — what was really submitted, rendered, approved. |
+
+`drive.py reset` deletes those last two files and nothing else — progress
+lives on disk, so replaying a rung has to be explicit. Keep session and world
+apart in your head: rung 04 is entirely about what to do when they disagree.
+
 ## The ladder (run each in its own folder)
 
 | Rung | Adds | The lesson |

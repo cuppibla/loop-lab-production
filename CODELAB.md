@@ -144,8 +144,54 @@ password (`.env` is gitignored — keep it that way).
 > ℹ️ ADK 2.5 prints a couple of harmless one-line `[EXPERIMENTAL]` warnings.
 > Ignore them; expected outputs below omit them.
 
+## Meet the cast
+Duration: 4:00
+
+Before you run anything: every rung in this lab is the same five things. Learn
+them once and the rest of the lab is just adding one idea at a time.
+
+### Three programs you run
+
+| File | What it is | Who starts it |
+|---|---|---|
+| `agent.py` | The agent's *definition* — its instructions and its tools. **It never runs on its own**; it just gets loaded. | nobody |
+| `drive.py` | **The CLI you type.** `reset` · `start` · `approve` · `status` · `pending`. Each command starts one run and then the process exits. | you, terminal 1 |
+| `farm.py` | The render farm — a **separate program**, standing in for the outside world. Renders, then rings the doorbell once. | you, terminal 2 |
+
+> aside positive
+> **`drive.py` is not the agent.** It's a driver: it hands the agent a message,
+> streams whatever events come back, and quits. The name matters — everything
+> in this lab is about *who calls `drive()`*, and in rungs 01–04 the answer is
+> literally "you, by typing."
+
+### Two files that hold everything
+
+| File | What it holds | Who writes it |
+|---|---|---|
+| `floor.db` | **THE SESSION** — the agent's memory. A SQLite database of *events*: what was said, what tool was called, what came back. | ADK, automatically |
+| `render_farm.json` | **THE WORLD** — the render farm's order book: what was really submitted, really rendered, really approved. | your tools + the farm |
+
+Keep these two apart in your head. The agent's *belief* lives in one; what
+*actually happened* lives in the other. Most of rung 04 is what to do when
+they disagree.
+
+### And that's why `reset` exists
+
+Since progress lives on disk, it does **not** vanish when a process exits —
+so starting the story over needs an explicit command. Here it is, in full:
+
+```python
+if cmd == "reset":
+    for f in ["floor.db", jobs.STORE]:      # jobs.STORE == "render_farm.json"
+        if os.path.exists(f):
+            os.remove(f)                    # …that's the whole thing
+```
+
+`drive.py reset` deletes the two files. Nothing more. If a rung ever behaves
+strangely, `reset` and replay it.
+
 ## Rung 01 · One long job
-Duration: 5:00
+Duration: 8:00
 
 📂 [`01_one_long_job/`](https://github.com/cuppibla/loop-lab-production/tree/main/01_one_long_job)
 
@@ -167,19 +213,69 @@ python drive.py start
 The tool is a `LongRunningFunctionTool`: it returns `pending` and **the run
 ends**. The process exits. Now look at what "a running render" actually is:
 
-👉💻
+The trailer is now "rendering." Prove to yourself what that actually means.
+
+### Prove it: there is no long-running process
+
+👉💻 **First, look for the process that is supposedly doing the work:**
 ```bash
-python drive.py pending
+ps ax | grep drive.py | grep -v grep
 ```
 
-```
-[pending] 1 open long-running call(s) in the session:
-    o6297pl6  submit_render({'kind': 'trailer', 'take': 1})
-[world]   farm order book: [('trailer', 't1', 'submitted', '-')]
+**Expected output:** *(nothing at all)*
+
+👉💻 **Now dump the entire state of the system.** `peek.py` reads both files
+and prints everything there is to know:
+```bash
+python peek.py
 ```
 
-One open call in the session. One row in the order book. **That is the entire
-system.** No process, no thread, no `await`.
+**Expected output** (trimmed):
+```
+─── Processes belonging to this agent ─────────────────
+  0 process(es) alive
+    (none — no process, no thread, no container)
+
+─── THE WORLD — render_farm.json (what really happened) ───
+  204 bytes on disk:
+    { "jobs": [ { "job_id": "JOB-trailer-t1", "kind": "trailer", "take": 1,
+                  "call_id": "slxqb3mq", "status": "submitted" } ],
+      "approvals": [] }
+
+─── THE SESSION — floor.db (the agent's memory) ───────
+  4 event(s) logged. In order:
+
+  event 1 · author=user
+      text          : Start the trailer render for 'Tuesday, Again'.
+  event 2 · author=producer
+      function_call : submit_render({'take': 1, 'kind': 'trailer'})  id=slxqb3mq
+      ⏳ long_running_tool_ids = ['slxqb3mq']   ← the call still on hold
+  event 3 · author=producer
+      function_resp : submit_render → status=pending
+  event 4 · author=producer
+      text          : ...
+
+─── So what is 'a render in progress'? ────────────────
+  call_id slxqb3mq
+    · in the SESSION: an unanswered call, waiting for a function_response
+    · in the WORLD  : JOB-trailer-t1  status=submitted
+    · the SAME id in both files — that is the return address the
+      doorbell will use to find its way back to this conversation.
+```
+
+Read the last block twice. **A render in progress is: one unanswered call in
+a database, one row in a JSON file, and zero processes.** That is the whole
+system. Nothing is "waiting" anywhere — there is no thread parked, no `await`
+suspended, no container burning money. If you rebooted your laptop right now
+and came back tomorrow, the state above would be *exactly* the same.
+
+> aside positive
+> **Then where is the "long" part?** In the outside world — in a *different*
+> program. Open `../02_two_doorbells/farm.py` and you'll find it:
+> `DURATIONS = {"trailer": 8, ...}` and an `asyncio.sleep`. Eight seconds here
+> so the lab is watchable; swap that line for a real Veo call in rung 06 and
+> it's ten minutes; make it a human approval and it's two days. **The task is
+> long. No process is.**
 
 ### What just happened, mechanically
 
@@ -207,10 +303,20 @@ job. The farm doesn't exist yet. Who rings the doorbell?
 
 ### What you learned
 
+- **"A long-running agent" has no long-running process.** You just proved it:
+  0 processes, 2 files, ~250 bytes. The *task* is long; the process is not.
 - A long-running call **parks** in the durable session and the run ends —
   "waiting" costs zero compute and survives any restart.
 - The **return address**: the tool stores its own `function_call_id` next to
   the external job. That correlation is the whole callback architecture.
+
+> aside negative
+> **If you take one habit from this rung, take `peek.py`.** Whenever a
+> long-running agent seems "stuck", the answer is always in the same two
+> places: what does the session think is outstanding, and what does the world
+> actually say? Later rungs fold this into `drive.py pending`, and rung 04
+> turns it into an automated reconciler — but it's the same two questions
+> every time.
 
 > aside positive
 > **On your own agent:** take any tool of yours that waits on something slow —

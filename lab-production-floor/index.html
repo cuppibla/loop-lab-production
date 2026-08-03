@@ -119,7 +119,58 @@ cp .env.example .env              # then put your Gemini API key in .env
 
       </google-codelab-step>
     
-      <google-codelab-step label="Rung 01 · One long job" duration="5">
+      <google-codelab-step label="Meet the cast" duration="4">
+        <p>Before you run anything: every rung in this lab is the same five things. Learn them once and the rest of the lab is just adding one idea at a time.</p>
+<h2 is-upgraded>Three programs you run</h2>
+<table>
+<tr><td colspan="1" rowspan="1"><p>File</p>
+</td><td colspan="1" rowspan="1"><p>What it is</p>
+</td><td colspan="1" rowspan="1"><p>Who starts it</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><code>agent.py</code></p>
+</td><td colspan="1" rowspan="1"><p>The agent&#39;s <em>definition</em> — its instructions and its tools. <strong>It never runs on its own</strong>; it just gets loaded.</p>
+</td><td colspan="1" rowspan="1"><p>nobody</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><code>drive.py</code></p>
+</td><td colspan="1" rowspan="1"><p><strong>The CLI you type. </strong><code>reset</code> · <code>start</code> · <code>approve</code> · <code>status</code> · <code>pending</code>. Each command starts one run and then the process exits.</p>
+</td><td colspan="1" rowspan="1"><p>you, terminal 1</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><code>farm.py</code></p>
+</td><td colspan="1" rowspan="1"><p>The render farm — a <strong>separate program</strong>, standing in for the outside world. Renders, then rings the doorbell once.</p>
+</td><td colspan="1" rowspan="1"><p>you, terminal 2</p>
+</td></tr>
+</table>
+<aside class="special"><p><strong><code>drive.py</code></strong><strong> is not the agent.</strong> It&#39;s a driver: it hands the agent a message, streams whatever events come back, and quits. The name matters — everything in this lab is about <em>who calls </em><em><code>drive()</code></em>, and in rungs 01–04 the answer is literally &#34;you, by typing.&#34;</p>
+</aside>
+<h2 is-upgraded>Two files that hold everything</h2>
+<table>
+<tr><td colspan="1" rowspan="1"><p>File</p>
+</td><td colspan="1" rowspan="1"><p>What it holds</p>
+</td><td colspan="1" rowspan="1"><p>Who writes it</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><code>floor.db</code></p>
+</td><td colspan="1" rowspan="1"><p><strong>THE SESSION</strong> — the agent&#39;s memory. A SQLite database of <em>events</em>: what was said, what tool was called, what came back.</p>
+</td><td colspan="1" rowspan="1"><p>ADK, automatically</p>
+</td></tr>
+<tr><td colspan="1" rowspan="1"><p><code>render_farm.json</code></p>
+</td><td colspan="1" rowspan="1"><p><strong>THE WORLD</strong> — the render farm&#39;s order book: what was really submitted, really rendered, really approved.</p>
+</td><td colspan="1" rowspan="1"><p>your tools + the farm</p>
+</td></tr>
+</table>
+<p>Keep these two apart in your head. The agent&#39;s <em>belief</em> lives in one; what <em>actually happened</em> lives in the other. Most of rung 04 is what to do when they disagree.</p>
+<h2 is-upgraded>And that&#39;s why <code>reset</code> exists</h2>
+<p>Since progress lives on disk, it does <strong>not</strong> vanish when a process exits — so starting the story over needs an explicit command. Here it is, in full:</p>
+<pre><code language="language-python" class="language-python">if cmd == &#34;reset&#34;:
+    for f in [&#34;floor.db&#34;, jobs.STORE]:      # jobs.STORE == &#34;render_farm.json&#34;
+        if os.path.exists(f):
+            os.remove(f)                    # ...that&#39;s the whole thing
+</code></pre>
+<p><code>drive.py reset</code> deletes the two files. Nothing more. If a rung ever behaves strangely, <code>reset</code> and replay it.</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Rung 01 · One long job" duration="8">
         <p>📂 <a href="https://github.com/cuppibla/loop-lab-production/tree/main/01_one_long_job" target="_blank"><code>01_one_long_job/</code></a></p>
 <p>👉💻</p>
 <pre><code language="language-bash" class="language-bash">cd 01_one_long_job
@@ -133,14 +184,49 @@ python drive.py start
 [drive] -&gt; PAUSED   (the process you are in is about to exit)
 </code></pre>
 <p>The tool is a <code>LongRunningFunctionTool</code>: it returns <code>pending</code> and <strong>the run ends</strong>. The process exits. Now look at what &#34;a running render&#34; actually is:</p>
-<p>👉💻</p>
-<pre><code language="language-bash" class="language-bash">python drive.py pending
+<p>The trailer is now &#34;rendering.&#34; Prove to yourself what that actually means.</p>
+<h2 is-upgraded>Prove it: there is no long-running process</h2>
+<p>👉💻 <strong>First, look for the process that is supposedly doing the work:</strong></p>
+<pre><code language="language-bash" class="language-bash">ps ax | grep drive.py | grep -v grep
 </code></pre>
-<pre><code>[pending] 1 open long-running call(s) in the session:
-    o6297pl6  submit_render({&#39;kind&#39;: &#39;trailer&#39;, &#39;take&#39;: 1})
-[world]   farm order book: [(&#39;trailer&#39;, &#39;t1&#39;, &#39;submitted&#39;, &#39;-&#39;)]
+<p><strong>Expected output: </strong><em>(nothing at all)</em></p>
+<p>👉💻 <strong>Now dump the entire state of the system. </strong><code>peek.py</code> reads both files and prints everything there is to know:</p>
+<pre><code language="language-bash" class="language-bash">python peek.py
 </code></pre>
-<p>One open call in the session. One row in the order book. <strong>That is the entire system.</strong> No process, no thread, no <code>await</code>.</p>
+<p><strong>Expected output</strong> (trimmed):</p>
+<pre><code>─── Processes belonging to this agent ─────────────────
+  0 process(es) alive
+    (none — no process, no thread, no container)
+
+─── THE WORLD — render_farm.json (what really happened) ───
+  204 bytes on disk:
+    { &#34;jobs&#34;: [ { &#34;job_id&#34;: &#34;JOB-trailer-t1&#34;, &#34;kind&#34;: &#34;trailer&#34;, &#34;take&#34;: 1,
+                  &#34;call_id&#34;: &#34;slxqb3mq&#34;, &#34;status&#34;: &#34;submitted&#34; } ],
+      &#34;approvals&#34;: [] }
+
+─── THE SESSION — floor.db (the agent&#39;s memory) ───────
+  4 event(s) logged. In order:
+
+  event 1 · author=user
+      text          : Start the trailer render for &#39;Tuesday, Again&#39;.
+  event 2 · author=producer
+      function_call : submit_render({&#39;take&#39;: 1, &#39;kind&#39;: &#39;trailer&#39;})  id=slxqb3mq
+      ⏳ long_running_tool_ids = [&#39;slxqb3mq&#39;]   ← the call still on hold
+  event 3 · author=producer
+      function_resp : submit_render → status=pending
+  event 4 · author=producer
+      text          : ...
+
+─── So what is &#39;a render in progress&#39;? ────────────────
+  call_id slxqb3mq
+    · in the SESSION: an unanswered call, waiting for a function_response
+    · in the WORLD  : JOB-trailer-t1  status=submitted
+    · the SAME id in both files — that is the return address the
+      doorbell will use to find its way back to this conversation.
+</code></pre>
+<p>Read the last block twice. <strong>A render in progress is: one unanswered call in a database, one row in a JSON file, and zero processes.</strong> That is the whole system. Nothing is &#34;waiting&#34; anywhere — there is no thread parked, no <code>await</code> suspended, no container burning money. If you rebooted your laptop right now and came back tomorrow, the state above would be <em>exactly</em> the same.</p>
+<aside class="special"><p><strong>Then where is the &#34;long&#34; part?</strong> In the outside world — in a <em>different</em> program. Open <code>../02_two_doorbells/farm.py</code> and you&#39;ll find it: <code>DURATIONS = {"trailer": 8, ...}</code> and an <code>asyncio.sleep</code>. Eight seconds here so the lab is watchable; swap that line for a real Veo call in rung 06 and it&#39;s ten minutes; make it a human approval and it&#39;s two days. <strong>The task is long. No process is.</strong></p>
+</aside>
 <h2 is-upgraded>What just happened, mechanically</h2>
 <ol type="1">
 <li>The model called <code>submit_render</code> — a <code>LongRunningFunctionTool</code>.</li>
@@ -154,9 +240,12 @@ python drive.py start
 <p><em>(Lab 1 alumni: this was Steps 2–3 in a new costume. Skim ahead.)</em></p>
 <h2 is-upgraded>What you learned</h2>
 <ul>
+<li><strong>&#34;A long-running agent&#34; has no long-running process.</strong> You just proved it: 0 processes, 2 files, ~250 bytes. The <em>task</em> is long; the process is not.</li>
 <li>A long-running call <strong>parks</strong> in the durable session and the run ends — &#34;waiting&#34; costs zero compute and survives any restart.</li>
 <li>The <strong>return address</strong>: the tool stores its own <code>function_call_id</code> next to the external job. That correlation is the whole callback architecture.</li>
 </ul>
+<aside class="warning"><p><strong>If you take one habit from this rung, take </strong><strong><code>peek.py</code></strong><strong>.</strong> Whenever a long-running agent seems &#34;stuck&#34;, the answer is always in the same two places: what does the session think is outstanding, and what does the world actually say? Later rungs fold this into <code>drive.py pending</code>, and rung 04 turns it into an automated reconciler — but it&#39;s the same two questions every time.</p>
+</aside>
 <aside class="special"><p><strong>On your own agent:</strong> take any tool of yours that waits on something slow — a batch API, an export, a human review — and convert it: return <code>pending</code>, and store <code>tool_context.function_call_id</code> alongside your external reference (order id, ticket id, operation name), somewhere durable. If you can&#39;t point at where that correlation lives, you don&#39;t have a long-running agent yet — you have a request that hasn&#39;t timed out.</p>
 </aside>
 
