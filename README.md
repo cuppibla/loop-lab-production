@@ -1,5 +1,10 @@
 # The Production Floor · doorbells, fan-out, joins, and the backstop
 
+> **🌅 Want the full course?** This lab and its prequel are merged into
+> **[Overnight Studios](https://github.com/cuppibla/overnight-studios)** — the
+> comprehensive long-running-agent lab (nine rungs, one axis, Colab included).
+> This repo remains the standalone trigger-layer climb.
+
 A hands-on ADK lab about the **Trigger layer** of a long-running agent: who —
 or what — presses "Continue". You build a producer agent that fans one request
 out into four long render jobs, gets woken by **two doorbells** (a machine
